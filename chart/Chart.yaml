@@ -1,0 +1,6 @@
+apiVersion: v2
+name: demo-app
+description: "Демо-приложение для статьи про плавное удаление нод descheduler'ом: Deployment (business-app), DaemonSet (node-agent), StatefulSet (redis), CronJob и фоновый воркер (Deployment)."
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

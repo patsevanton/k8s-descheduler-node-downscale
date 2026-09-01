@@ -1,0 +1,72 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "demo-app.fullname" . }}-redis
+  labels:
+    app.kubernetes.io/component: redis
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "demo-app.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  ports:
+  - name: redis
+    port: {{ .Values.redis.service.port }}
+    targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "demo-app.fullname" . }}-redis
+  labels:
+    app.kubernetes.io/component: redis
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "demo-app.fullname" . }}-redis
+  replicas: {{ .Values.redis.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "demo-app.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      serviceAccountName: {{ include "demo-app.serviceAccountName" . }}
+      containers:
+      - name: redis
+        image: {{ include "demo-app.image" (merge (dict "registry" $.Values.imageRegistry) .Values.redis.image) | quote }}
+        imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+        args:
+        {{- toYaml .Values.redis.args | nindent 8 }}
+        ports:
+        - containerPort: {{ .Values.redis.service.port }}
+          name: redis
+        resources:
+          {{- toYaml .Values.redis.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  {{- if .Values.redis.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      {{- if .Values.redis.persistence.storageClass }}
+      storageClassName: {{ .Values.redis.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.redis.persistence.size }}
+  {{- else }}
+      volumes:
+      - name: data
+        emptyDir: {}
+  {{- end }}
+{{- end }}

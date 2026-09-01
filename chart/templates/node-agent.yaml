@@ -1,0 +1,36 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "demo-app.fullname" . }}-node-agent
+  labels:
+    app.kubernetes.io/component: node-agent
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "demo-app.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-agent
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-agent
+    spec:
+      serviceAccountName: {{ include "demo-app.serviceAccountName" . }}
+      containers:
+      - name: node-agent
+        image: {{ include "demo-app.image" (merge (dict "registry" $.Values.imageRegistry) .Values.nodeAgent.image) | quote }}
+        imagePullPolicy: {{ .Values.nodeAgent.image.pullPolicy }}
+        env:
+        {{- range $k, $v := .Values.nodeAgent.env }}
+        - name: {{ $k }}
+          value: {{ $v | quote }}
+        {{- end }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        resources:
+          {{- toYaml .Values.nodeAgent.resources | nindent 10 }}
+{{- end }}

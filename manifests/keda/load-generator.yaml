@@ -1,0 +1,47 @@
+# Генератор нагрузки: плавно наращивает, а затем плавно снижает RPS на business-app
+# по гладкой S-образной кривой smoothstep — моделируя дневной подъём и ночной спад
+# трафика в одном цикле CYCLE.
+#
+# За CYCLE (по умолчанию 30м) RPS растёт с MIN_RPS до MAX_RPS, затем симметрично
+# спадает обратно к MIN_RPS. Так демо показывает полный цикл:
+# рост RPS → KEDA поднимает реплики → Cluster Autoscaler добавляет ноды →
+# спад RPS → KEDA ужимает реплики → descheduler переуплотняет поды →
+# Cluster Autoscaler удаляет ноды по одной.
+#
+# Пик 600 RPS → ceil(600/25) = 24 реплики × 250m CPU = 6000m — помещается
+# в 5 нод по 2 vCPU с запасом под системные поды.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  labels:
+    app: load-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+      - name: load-generator
+        image: ghcr.io/patsevanton/k8s-descheduler-node-downscale-one-by-one/load-generator:1.0.0
+        env:
+        - name: TARGET_URL
+          value: "http://demo-app-business-app:8080/"
+        - name: CYCLE
+          value: "30m" # длительность цикла нарастания и спада RPS MIN_RPS→MAX_RPS→MIN_RPS
+        - name: MIN_RPS
+          value: "0"
+        - name: MAX_RPS
+          value: "600" # пик нагрузки: ceil(600/25) = 24 реплики, помещается в 5 нод
+        resources:
+          requests:
+            cpu: 250m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi

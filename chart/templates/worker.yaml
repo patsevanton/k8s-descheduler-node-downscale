@@ -1,0 +1,34 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "demo-app.fullname" . }}-worker
+  labels:
+    app.kubernetes.io/component: worker
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "demo-app.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ include "demo-app.serviceAccountName" . }}
+      containers:
+      - name: worker
+        image: {{ include "demo-app.image" (merge (dict "registry" $.Values.imageRegistry) .Values.worker.image) | quote }}
+        imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+        env:
+        {{- $redisAddr := include "demo-app.redisAddr" . }}
+        {{- range $k, $v := .Values.worker.env }}
+        - name: {{ $k }}
+          value: {{ if and (eq $k "REDIS_ADDR") (eq $v "") }}{{ $redisAddr | quote }}{{ else }}{{ $v | quote }}{{ end }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.worker.resources | nindent 10 }}
+{{- end }}

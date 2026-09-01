@@ -1,0 +1,137 @@
+# Публичные значения Helm-чарта демо-приложения.
+# Образы собираются из apps/ и публикуются в GHCR (см. .github/workflows/docker.yml).
+
+nameOverride: ""
+fullnameOverride: "demo-app"
+
+imageRegistry: ghcr.io/patsevanton/k8s-descheduler-node-downscale-one-by-one
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# --- business-app (Deployment) ---
+businessApp:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: business-app
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  env:
+    LISTEN_ADDR: ":8080"
+    REQUEST_LATENCY_MS: "30"
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 250m
+      memory: 250Mi
+    limits:
+      cpu: 250m
+      memory: 250Mi
+  # PodDisruptionBudget: не даёт eviction/drain выселить все реплики разом.
+  # Задаётся либо minAvailable (сколько реплик обязаны остаться), либо maxUnavailable
+  # (сколько реплик максимум можно выселить одновременно) — не оба сразу.
+  pdb:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+  # Верхняя граница graceful shutdown: kubelet шлёт SIGTERM и ждёт столько секунд,
+  # прежде чем убить под SIGKILL. Приложение обрабатывает SIGTERM в Go (http.Server.Shutdown).
+  terminationGracePeriodSeconds: 30
+  probes:
+    readiness:
+      path: /readyz
+      port: 8080
+    liveness:
+      path: /healthz
+      port: 8080
+
+# --- node-agent (DaemonSet) ---
+nodeAgent:
+  enabled: true
+  image:
+    repository: node-agent
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  env:
+    INTERVAL_SECONDS: "10"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# --- redis (StatefulSet) ---
+redis:
+  enabled: true
+  image:
+    repository: docker.io/library/redis
+    tag: "7.4-alpine"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 1Gi
+  args:
+    - "--save"
+    - "60"
+    - "1"
+    - "--appendonly"
+    - "yes"
+
+# --- worker (background job, Deployment) ---
+worker:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: worker
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  env:
+    REDIS_ADDR: ""
+    INTERVAL_SECONDS: "5"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# --- cron-job (CronJob) ---
+cronJob:
+  enabled: true
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  image:
+    repository: cron-job
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  env:
+    REDIS_ADDR: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  restartPolicy: Never

@@ -1,0 +1,36 @@
+{{- if .Values.cronJob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "demo-app.fullname" . }}-cron-job
+  labels:
+    app.kubernetes.io/component: cron-job
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronJob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronJob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronJob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronJob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "demo-app.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: cron-job
+        spec:
+          restartPolicy: {{ .Values.cronJob.restartPolicy }}
+          serviceAccountName: {{ include "demo-app.serviceAccountName" . }}
+          containers:
+          - name: cron-job
+            image: {{ include "demo-app.image" (merge (dict "registry" $.Values.imageRegistry) .Values.cronJob.image) | quote }}
+            imagePullPolicy: {{ .Values.cronJob.image.pullPolicy }}
+            env:
+            {{- $redisAddr := include "demo-app.redisAddr" . }}
+            {{- range $k, $v := .Values.cronJob.env }}
+            - name: {{ $k }}
+              value: {{ if and (eq $k "REDIS_ADDR") (eq $v "") }}{{ $redisAddr | quote }}{{ else }}{{ $v | quote }}{{ end }}
+            {{- end }}
+            resources:
+              {{- toYaml .Values.cronJob.resources | nindent 14 }}
+{{- end }}

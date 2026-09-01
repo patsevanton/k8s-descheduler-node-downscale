@@ -1,6 +1,6 @@
 # Плавное удаление k8s нод по одной при снижении трафика: descheduler + Cluster Autoscaler
 
-Знакомая картина: в кластере Kubernetes живут бизнес-сервисы, нагрузка на которые днём растёт до пика, а ночью падает почти до нуля. При росте трафика Kubernetes хорошо умеет масштабироваться вверх: KEDA (или HPA) поднимает реплики, Cluster Autoscaler добавляет ноды. А вот с обратным движением всё хуже — когда трафик спадает, число реплик сокращается, но ноды остаются стоять полупустыми и продолжают стоить денег. Cluster Autoscaler удаляет ноды далеко не сразу: ему нужно, чтобы нода была незагружена. Cluster Autoscaler удаляет  только [по одной ноде](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md#how-does-scale-down-work).
+Знакомая картина: в кластере Kubernetes живут бизнес-сервисы, нагрузка на которые днём растёт до пика, а ночью падает почти до нуля. При росте трафика Kubernetes хорошо умеет масштабироваться вверх: KEDA (или HPA) поднимает реплики, Cluster Autoscaler добавляет ноды. А вот с обратным движением всё хуже — когда трафик спадает, число реплик сокращается, но ноды остаются стоять полупустыми и продолжают стоить денег. Cluster Autoscaler удаляет ноды далеко не сразу: ему нужно, чтобы нода была незагружена. Непустые ноды Cluster Autoscaler удаляет [по одной за раз](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md#how-does-scale-down-work), а пустые — пачкой до 10.
 
 Выход — добавить в связку **descheduler**: компонент, который выселяет поды с недозагруженных нод и уплотняет их на оставшихся, чтобы Cluster Autoscaler увидел пустые ноды и удалил их **по одной**, аккуратно и без простоев. В этой статье разберём, как устроен этот цикл «вниз», и развернём демо-стенд, на котором своими глазами видно, как ноды схлопываются одна за другой при спаде трафика.
 
@@ -9,7 +9,7 @@
 Прежде чем добавлять descheduler, поймём, почему одного Cluster Autoscaler недостаточно. Cluster Autoscaler (в Yandex Managed K8s включается флагом `auto_scale` на node group) удаляет ноду, только когда **все** условия выполнены одновременно:
 
 1. **Суммарные `resources.requests` подов на ноде меньше 50%** от allocatable (`--scale-down-utilization-threshold`, по умолчанию 0.5).
-2. **Все поды можно перенести** на другие ноды. Не переносятся: поды без контроллера (голые Pod'ы), поды с локальным хранилищем (`emptyDir`, `hostPath`, PVC в режиме ReadWriteOnce), поды, которым мешает PodDisruptionBudget, поды с ограничениями планировщика, которые не помещаются больше нигде.
+2. **Все поды можно перенести** на другие ноды. Не переносятся: поды без контроллера (голые Pod'ы), поды с локальным хранилищем (`emptyDir`, `hostPath`), поды, которым мешает PodDisruptionBudget, поды с ограничениями планировщика, которые не помещаются больше нигде (в том числе поды с PVC `ReadWriteOnce`, привязанным к зоне/ноде).
 3. Нода находится в таком состоянии **не менее 10 минут** (`--scale-down-unneeded-time`).
 
 И главное для нашей темы: **непустые ноды CA удаляет строго по одной за раз** ([документация](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md#how-does-scale-down-work)), чтобы не создать волну unschedulable-подов. Пустые ноды он может удалять пачкой (до 10 сразу).
@@ -72,6 +72,9 @@ deschedulerPolicy:
               cpu: 20     # нода считается «пустой», если занято < 20% CPU
               memory: 20   # ... и < 20% памяти
               pods: 20     # ... и < 20% от ёмкости по числу подов
+        - name: DefaultEvictor
+          args:
+            ignorePvcPods: true   # защитить поды с PVC от выселения (Redis не должен переезжать)
       plugins:
         balance:
           enabled:
@@ -87,7 +90,7 @@ helm upgrade --install descheduler descheduler/descheduler \
   --set kind=CronJob \
   --set schedule="*/2 * * * *" \
   --set image.tag=v0.36.0 \
-  --set-json 'deschedulerPolicy={"profiles":[{"name":"default","pluginConfig":[{"name":"HighNodeUtilization","args":{"thresholds":{"cpu":20,"memory":20,"pods":20}}}],"plugins":{"balance":{"enabled":["HighNodeUtilization"]}}}]}'
+  --set-json 'deschedulerPolicy={"profiles":[{"name":"default","pluginConfig":[{"name":"HighNodeUtilization","args":{"thresholds":{"cpu":20,"memory":20,"pods":20}}},{"name":"DefaultEvictor","args":{"ignorePvcPods":true}}],"plugins":{"balance":{"enabled":["HighNodeUtilization"]}}}]}'
 ```
 
 > **Почему CronJob, а не Deployment.** Descheduler — это периодическая «уборка», а не постоянно работающий сервис: он отработал, выселил поды и завершился. Запуск CronJob'ем каждые 2 минуты — стандартный режим из официального чарта. Демо-стенду этого достаточно, а в проде интервал подбирайте так, чтобы не гонять лишние eviction'ы и не нагружать API-сервер.
@@ -170,7 +173,7 @@ helm upgrade --install descheduler descheduler/descheduler \
   --set kind=CronJob \
   --set schedule="*/2 * * * *" \
   --set image.tag=v0.36.0 \
-  --set-json 'deschedulerPolicy={"profiles":[{"name":"default","pluginConfig":[{"name":"HighNodeUtilization","args":{"thresholds":{"cpu":20,"memory":20,"pods":20}}}],"plugins":{"balance":{"enabled":["HighNodeUtilization"]}}}]}'
+  --set-json 'deschedulerPolicy={"profiles":[{"name":"default","pluginConfig":[{"name":"HighNodeUtilization","args":{"thresholds":{"cpu":20,"memory":20,"pods":20}}},{"name":"DefaultEvictor","args":{"ignorePvcPods":true}}],"plugins":{"balance":{"enabled":["HighNodeUtilization"]}}}]}'
 ```
 
 ### Шаг 2. Ставим KEDA
@@ -295,16 +298,16 @@ count(kube_node_status_condition{condition="Ready", status="true"})
 | **Нет PodDisruptionBudget** | Eviction (descheduler) и drain могут выселить все реплики сразу — сервис лежит на время переезда | Повесить PDB с `minAvailable`/`maxUnavailable` на критичные Deployment/StatefulSet |
 | **Слишком строгий PDB** (`maxUnavailable: 0` при одной реплике, `minAvailable == replicas`) | Выселение блокируется, под не переезжает, нода не освобождается и не удаляется | Разрешить хотя бы одно выселение (`maxUnavailable: 1`, либо `minAvailable: replicas-1`) |
 | **Голый Pod** (без контроллера) | CA считает такой под непереносимым и никогда не удалит его ноду | Заводить Deployment/ReplicaSet; голые поды — осознанно, с аннотацией `safe-to-evict` |
-| **Локальное хранилище**: `emptyDir` / `hostPath` / PVC `ReadWriteOnce` | Под привязан к ноде, не переносится — якорит ноду навсегда | Выносить состояние в сетевое хранилище (`ReadWriteMany`), репликацию или отдельную node group без scale-down |
+| **Локальное хранилище**: `emptyDir` / `hostPath` | Под привязан к ноде, не переносится — якорит ноду навсегда | Выносить состояние в сетевое хранилище, репликацию или отдельную node group без scale-down |
 | **Нет podAntiAffinity** | Все реплики могут лечь на одну ноду; при её удалении сервис целиком уходит вниз | Добавить podAntiAffinity по `topologyKey: kubernetes.io/hostname` (и/или `topology.kubernetes.io/zone`) |
 | **Нет или завышены `resources.requests`** | Без requests CA не считает utilisation (порог 50% не работает); завышенные requests мешают перепланированию — под не помещается, eviction фейлится | Задавать честные `requests` под реальное потребление; `limits` — отдельно |
 | **readiness/liveness не отражают состояние** | Под продолжает принимать трафик, пока останавливается (readiness не гаснет), либо режется преждевременно | Readiness, который быстро уводит под из endpoint'ов; при необходимости синхронизировать с preStop |
-| **Системный под мешает scale-down** (агент вне `kube-system`, но не DaemonSet) | Поды в `kube-system` по умолчанию непереносимы — если ваш агент попал туда Deployment'ом, нода не удалится | DaemonSet для системных агентов или `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"` |
+| **Системный под мешает scale-down** (агент в `kube-system`, но не DaemonSet/mirror-под) | Поды в `kube-system`, которые не создаются на каждой ноде по умолчанию (например, Deployment) и без PDB, CA считает непереносимыми — нода не удалится | Держать системных агентов DaemonSet'ом; иначе повесить на них PDB или аннотацию `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"` |
 | **Пороги descheduler ≥ порога CA** | CA сам начинает удалять занятые ноды раньше, чем descheduler их уплотнит, — рывки и лишние eviction'ы | Держать `thresholds` descheduler **ниже** `--scale-down-utilization-threshold` CA (20% < 50%) |
 
 **Descheduler не нарушает PDB.** Eviction API уважает PodDisruptionBudget: если выселение пода нарушит бюджет, descheduler его пропустит. Это же относится и к CA. Вывод: накиньте PDB на критичные сервисы — это не помешает схеме, а защитит от излишне агрессивной уборки.
 
-**DaemonSet не мешает удалению пустой ноды.** Под `node-agent` живёт на каждой ноде, но CA игнорирует daemon-поды при расчёте: они не блокируют удаление ноды, потому что будут пересозданы на других нодах. Поэтому DaemonSet в демо показан отдельным ресурсом: он не ломает схлопывание.
+**DaemonSet не мешает удалению пустой ноды.** Под `node-agent` живёт на каждой ноде. В расчёте utilisation CA по умолчанию **учитывает** daemon-поды (флаг `--ignore-daemonsets-utilization`), но при проверке «все ли поды можно перенести» daemon-поды пропускает: они будут пересозданы на других нодах и не блокируют scale-down. Один маленький `node-agent` на загрузку ноды практически не влияет, поэтому в демо он не ломает схлопывание.
 
 **StatefulSet с PVC якорит ноду.** Redis в демо хранит данные на PVC `ReadWriteOnce`. CA считает такой под непереносимым (диск привязан к зоне/ноде) и никогда не удалит его ноду — это видно в выводе выше: одна нода осталась именно из-за Redis. Если нужно схлопывать кластер до нуля «лишних» нод — выносите stateful-нагрузку в отдельную node group без автоскейлинга вниз, либо используйте сетевое хранилище с `ReadWriteMany`/репликацией.
 
@@ -394,13 +397,14 @@ NAME                        MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTION
 demo-app-business-app       1               N/A               0                     58m
 ```
 
-`ALLOWED DISRUPTIONS = 0` — выселить нельзя ни одну реплику (иначе доступных останется 0). Descheduler это видит и пропускает под:
+`ALLOWED DISRUPTIONS = 0` — выселить нельзя ни одну реплику (иначе доступных останется 0). Descheduler всё равно пробует выселить под, но Eviction API отклоняет запрос с 429 (`Too many requests`). Отдельного события об этом descheduler по умолчанию не создаёт (`EvictionFailureEventNotification: false`) — отказ виден в логах его пода:
 
 ```bash
-$ kubectl get events --sort-by=.lastTimestamp | grep -iE 'disrupt|evict|not allowed'
-LAST SEEN   TYPE     REASON              OBJECT                        MESSAGE
-1m          Warning  ...                 pod/demo-app-business-app-...  Cannot evict pod as it would violate the pod's disruption budget.
+$ kubectl logs -n kube-system -l app.kubernetes.io/name=descheduler | grep 'Error evicting pod'
+... "Error evicting pod" pod="default/demo-app-business-app-..." reason="..." err="error when evicting pod (ignoring) \"demo-app-business-app-...\": Cannot evict pod as it would violate the pod's disruption budget."
 ```
+
+Если в политике задать `EvictionFailureEventNotification: true`, descheduler дополнительно создаст Warning-событие `EvictionFailed` с тем же текстом ошибки.
 
 Итог: единственный под «якорит» ноду ровно так же, как Redis с PVC из раздела выше — CA не может её удалить. Это **намеренное** поведение: сервис не ляжет, но и нода не схлопнется.
 

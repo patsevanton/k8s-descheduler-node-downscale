@@ -2,12 +2,11 @@ locals {
   folder_id  = var.folder_id
   network_id = yandex_vpc_network.descheduler.id
 
-  subnet_b_id   = yandex_vpc_subnet.descheduler-b.id
-  subnet_d_id   = yandex_vpc_subnet.descheduler-d.id
-  subnet_e_id   = yandex_vpc_subnet.descheduler-e.id
-  subnet_b_zone = yandex_vpc_subnet.descheduler-b.zone
-  subnet_d_zone = yandex_vpc_subnet.descheduler-d.zone
-  subnet_e_zone = yandex_vpc_subnet.descheduler-e.zone
+  # Стенд размещается в одной зоне: региональный мастер требует три рабочие
+  # зоны, а в текущем облаке доступны только ru-central1-a и ru-central1-d.
+  zone        = var.zone
+  subnet_id   = yandex_vpc_subnet.descheduler.id
+  subnet_zone = yandex_vpc_subnet.descheduler.zone
 
   # Публичный IP балансировщика Traefik → FQDN Grafana через sslip.io
   ingress_ip   = yandex_vpc_address.ingress.external_ipv4_address[0].address

@@ -3,26 +3,10 @@ resource "yandex_vpc_network" "descheduler" {
   name = "descheduler-vpc" # Имя сети VPC
 }
 
-# Ресурс для создания подсети в зоне "ru-central1-b"
-resource "yandex_vpc_subnet" "descheduler-b" {
+# Ресурс для создания подсети в зоне из переменной zone
+resource "yandex_vpc_subnet" "descheduler" {
   v4_cidr_blocks = ["10.0.1.0/24"]                   # CIDR блок для подсети (IP-диапазон)
-  zone           = "ru-central1-b"                   # Зона, где будет размещена подсеть
-  network_id     = yandex_vpc_network.descheduler.id # Сеть, к которой будет привязана подсеть
-  route_table_id = yandex_vpc_route_table.rt.id      # Маршрутизация исходящего трафика через NAT-шлюз
-}
-
-# Ресурс для создания подсети в зоне "ru-central1-d"
-resource "yandex_vpc_subnet" "descheduler-d" {
-  v4_cidr_blocks = ["10.0.2.0/24"]                   # CIDR блок для подсети (IP-диапазон)
-  zone           = "ru-central1-d"                   # Зона, где будет размещена подсеть
-  network_id     = yandex_vpc_network.descheduler.id # Сеть, к которой будет привязана подсеть
-  route_table_id = yandex_vpc_route_table.rt.id      # Маршрутизация исходящего трафика через NAT-шлюз
-}
-
-# Ресурс для создания подсети в зоне "ru-central1-e"
-resource "yandex_vpc_subnet" "descheduler-e" {
-  v4_cidr_blocks = ["10.0.3.0/24"]                   # CIDR блок для подсети (IP-диапазон)
-  zone           = "ru-central1-e"                   # Зона, где будет размещена подсеть
+  zone           = var.zone                          # Зона, где будет размещена подсеть
   network_id     = yandex_vpc_network.descheduler.id # Сеть, к которой будет привязана подсеть
   route_table_id = yandex_vpc_route_table.rt.id      # Маршрутизация исходящего трафика через NAT-шлюз
 }
@@ -31,11 +15,11 @@ resource "yandex_vpc_subnet" "descheduler-e" {
 resource "yandex_vpc_address" "nat" {
   name = "descheduler-nat-pip"
   external_ipv4_address {
-    zone_id = yandex_vpc_subnet.descheduler-b.zone
+    zone_id = yandex_vpc_subnet.descheduler.zone
   }
 }
 
-# NAT-шлюз в зоне "ru-central1-b" для исходящего трафика из приватных подсетей
+# NAT-шлюз для исходящего трафика из приватной подсети
 resource "yandex_vpc_gateway" "nat" {
   name = "descheduler-nat-gw"
   shared_egress_gateway {}

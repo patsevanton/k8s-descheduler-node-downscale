@@ -3,6 +3,6 @@
 resource "yandex_vpc_address" "ingress" {
   name = "descheduler-ingress-pip"
   external_ipv4_address {
-    zone_id = yandex_vpc_subnet.descheduler-b.zone
+    zone_id = yandex_vpc_subnet.descheduler.zone
   }
 }

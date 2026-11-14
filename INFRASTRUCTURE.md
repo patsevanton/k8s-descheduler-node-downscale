@@ -52,10 +52,15 @@ Terraform генерирует values-файл `vmks-values.yaml` из шабл�
 - [Terraform](https://www.terraform.io/) >= 1.3
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [Helm](https://helm.sh/) >= 3 (для установки VictoriaMetrics K8s Stack)
+- ID каталога, в котором создаётся стенд, — он передаётся в Terraform через
+  `TF_VAR_folder_id` (у переменной `folder_id` нет значения по умолчанию)
+- Два свободных статических публичных IP в каталоге: под NAT-шлюз и под
+  балансировщик Traefik (квота `vpc.externalStaticAddresses.count`)
 
 ## Запуск
 
 ```bash
+export TF_VAR_folder_id=<folder-id>
 terraform init
 terraform apply
 ```

@@ -155,6 +155,7 @@ kubectl apply -f manifests/keda/vmservicescrape.yaml
 Инфраструктура поднимается Terraform'ом — детали в [INFRASTRUCTURE.md](INFRASTRUCTURE.md): Yandex Managed K8s с node group в автоскейлинге (1–5 нод), ноды без публичных IP, NAT-шлюз для исходящего трафика, Traefik. Descheduler ставится вручную через helm CLI (шаг 1).
 
 ```bash
+export TF_VAR_folder_id=<folder-id>   # каталог Yandex Cloud, в котором создаётся стенд
 terraform init
 terraform apply
 yc managed-kubernetes cluster get-credentials --id $(terraform output -raw k8s_cluster_id) --external --force
